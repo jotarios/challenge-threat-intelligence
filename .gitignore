@@ -1,0 +1,3 @@
+# Ignore the large threat intelligence database
+data/threat_intel.db
+
