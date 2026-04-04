@@ -1,3 +1,14 @@
 # Ignore the large threat intelligence database
 data/threat_intel.db
 
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+
+# Environment
+.env
+.venv/
+

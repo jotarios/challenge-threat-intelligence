@@ -1,0 +1,100 @@
+import asyncio
+import contextlib
+import logging
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
+import structlog
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+
+from app.config import get_settings
+from app.middleware import CorrelationIdMiddleware
+from app.routers import campaigns, dashboard, health, indicators
+from app.services.background import run_periodic_precompute
+from app.services.cache import CacheService
+from app.services.opensearch import OpenSearchService
+from app.services.postgres import PostgresService
+from app.services.redis_client import RedisService
+
+
+def setup_logging(log_level: str) -> None:
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.processors.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.JSONRenderer(),
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(getattr(logging, log_level.upper(), logging.INFO)),
+        context_class=dict,
+        logger_factory=structlog.PrintLoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    settings = get_settings()
+    setup_logging(settings.log_level)
+
+    redis_service = RedisService(settings.redis_url)
+    opensearch_service = OpenSearchService(settings.opensearch_url)
+    postgres_service = PostgresService(settings.postgres_dsn)
+
+    await redis_service.connect()
+    try:
+        await opensearch_service.connect()
+    except Exception:
+        await redis_service.close()
+        raise
+    try:
+        await postgres_service.connect()
+    except Exception:
+        await opensearch_service.close()
+        await redis_service.close()
+        raise
+
+    cache_service = CacheService(redis_service)
+
+    app.state.redis_service = redis_service
+    app.state.opensearch_service = opensearch_service
+    app.state.postgres_service = postgres_service
+    app.state.cache_service = cache_service
+
+    bg_task = asyncio.create_task(
+        run_periodic_precompute(redis_service, postgres_service, settings.dashboard_refresh_interval)
+    )
+
+    yield
+
+    bg_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await bg_task
+
+    await opensearch_service.close()
+    await postgres_service.close()
+    await redis_service.close()
+
+
+app = FastAPI(
+    title="Threat Intelligence API",
+    description="Real-time security dashboard backend with CQRS architecture. "
+    "OpenSearch for fast indicator lookups, PostgreSQL for campaign analytics, Redis for caching.",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(CorrelationIdMiddleware)
+app.include_router(indicators.router)
+app.include_router(campaigns.router)
+app.include_router(dashboard.router)
+app.include_router(health.router)
+
+
+@app.exception_handler(HTTPException)
+async def custom_http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail, "status_code": exc.status_code},
+    )
