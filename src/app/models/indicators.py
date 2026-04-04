@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -78,10 +79,12 @@ class SearchResponse(BaseModel):
 
 
 class SearchParams(BaseModel):
-    type: str | None = Field(None, description="Indicator type: ip, domain, url, hash")
-    value: str | None = Field(None, description="Partial match on indicator value")
-    threat_actor: str | None = Field(None, description="Filter by threat actor name")
-    campaign: str | None = Field(None, description="Filter by campaign name")
+    type: Literal["ip", "domain", "url", "hash"] | None = Field(
+        None, description="Indicator type: ip, domain, url, hash"
+    )
+    value: str | None = Field(None, max_length=256, description="Partial match on indicator value")
+    threat_actor: str | None = Field(None, max_length=256, description="Filter by threat actor name")
+    campaign: str | None = Field(None, max_length=256, description="Filter by campaign name")
     first_seen_after: datetime | None = Field(None, description="Indicators first seen after this date")
     last_seen_before: datetime | None = Field(None, description="Indicators last seen before this date")
     page: int = Field(1, ge=1, description="Page number (1-based)")

@@ -69,7 +69,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
     bg_task.cancel()
-    with contextlib.suppress(asyncio.CancelledError, Exception):
+    with contextlib.suppress(asyncio.CancelledError):
         await bg_task
 
     await opensearch_service.close()

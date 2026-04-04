@@ -18,9 +18,16 @@ async def test_get_indicator_happy_path(client: AsyncClient, mock_opensearch):
 @pytest.mark.asyncio
 async def test_get_indicator_not_found(client: AsyncClient, mock_opensearch):
     mock_opensearch.get_indicator.return_value = None
-    resp = await client.get("/api/indicators/nonexistent-id")
+    resp = await client.get("/api/indicators/00000000-0000-0000-0000-000000000000")
     assert resp.status_code == 404
     assert resp.json()["detail"] == "Indicator not found"
+
+
+@pytest.mark.asyncio
+async def test_get_indicator_invalid_id(client: AsyncClient):
+    resp = await client.get("/api/indicators/not-a-uuid")
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Invalid indicator ID format"
 
 
 @pytest.mark.asyncio

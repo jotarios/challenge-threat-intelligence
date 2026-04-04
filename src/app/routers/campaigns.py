@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import ValidationError
 
 from app.models.campaigns import CampaignTimeline, TimelineParams
+from app.sanitize import is_valid_uuid, sanitize_cache_key_segment
 
 router = APIRouter(prefix="/api/campaigns", tags=["Campaigns"])
 
@@ -31,12 +32,16 @@ async def get_campaign_timeline(
     request: Request,
     params: TimelineParams = Depends(get_timeline_params),
 ) -> CampaignTimeline:
+    if not is_valid_uuid(campaign_id):
+        raise HTTPException(status_code=400, detail="Invalid campaign ID format")
+
     cache = request.app.state.cache_service
     postgres = request.app.state.postgres_service
 
+    safe_key = sanitize_cache_key_segment(campaign_id)
     start_str = params.start_date.isoformat() if params.start_date else ""
     end_str = params.end_date.isoformat() if params.end_date else ""
-    cache_key = f"campaign:{campaign_id}:timeline:{params.group_by}:{start_str}:{end_str}"
+    cache_key = f"campaign:{safe_key}:timeline:{params.group_by}:{start_str}:{end_str}"
 
     async def fetch() -> dict[str, Any] | None:
         result: dict[str, Any] | None = await postgres.get_campaign_timeline(

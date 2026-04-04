@@ -12,6 +12,7 @@ from opensearchpy import (
 )
 
 from app.models.indicators import IndicatorDetail, IndicatorSearchItem, SearchParams
+from app.sanitize import escape_opensearch_wildcard
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,9 @@ class OpenSearchService:
             return detail.model_dump(mode="json")
         except NotFoundError:
             return None
+        except (KeyError, ValueError, TypeError) as e:
+            logger.warning("OpenSearch get_indicator malformed document %s: %s", indicator_id, e)
+            return None
         except (ConnectionError, ConnectionTimeout) as e:
             logger.error("OpenSearch get_indicator connection error: %s", e)
             raise
@@ -68,7 +72,8 @@ class OpenSearchService:
             filters.append({"term": {"type": params.type}})
 
         if params.value:
-            filters.append({"wildcard": {"value.keyword": f"*{params.value}*"}})
+            escaped = escape_opensearch_wildcard(params.value)
+            filters.append({"wildcard": {"value.keyword": f"*{escaped}*"}})
 
         if params.threat_actor:
             filters.append(
@@ -117,20 +122,25 @@ class OpenSearchService:
             logger.error("OpenSearch search transport error: %s", e)
             raise
 
-        total = result["hits"]["total"]["value"]
+        total_info = result["hits"]["total"]
+        total = total_info["value"] if isinstance(total_info, dict) else int(total_info)
         items = []
         for hit in result["hits"]["hits"]:
             src = hit["_source"]
-            item = IndicatorSearchItem(
-                id=src["id"],
-                type=src["type"],
-                value=src["value"],
-                confidence=src["confidence"],
-                first_seen=src.get("first_seen"),
-                campaign_count=len(src.get("campaigns", [])),
-                threat_actor_count=len(src.get("threat_actors", [])),
-            )
-            items.append(item.model_dump(mode="json"))
+            try:
+                item = IndicatorSearchItem(
+                    id=src["id"],
+                    type=src["type"],
+                    value=src["value"],
+                    confidence=src["confidence"],
+                    first_seen=src.get("first_seen"),
+                    campaign_count=len(src.get("campaigns", [])),
+                    threat_actor_count=len(src.get("threat_actors", [])),
+                )
+                items.append(item.model_dump(mode="json"))
+            except (KeyError, ValueError, TypeError) as e:
+                logger.warning("Skipping malformed search result: %s", e)
+                continue
 
         return items, total
 

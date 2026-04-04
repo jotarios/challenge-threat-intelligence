@@ -37,7 +37,7 @@ SAMPLE_SEARCH_ITEM = {
 
 SAMPLE_TIMELINE = {
     "campaign": {
-        "id": "camp-456",
+        "id": "660e8400-e29b-41d4-a716-446655440001",
         "name": "Operation ShadowNet",
         "description": "Targeted phishing campaign",
         "first_seen": "2024-10-01T00:00:00",

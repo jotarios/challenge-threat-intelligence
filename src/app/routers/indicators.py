@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.models.indicators import IndicatorDetail, IndicatorSearchItem, SearchParams, SearchResponse
+from app.sanitize import is_valid_uuid, sanitize_cache_key_segment
 
 router = APIRouter(prefix="/api/indicators", tags=["Indicators"])
 
@@ -60,14 +61,18 @@ async def search_indicators(
     description="Retrieve complete context for a specific indicator including related actors, campaigns, and indicators.",  # noqa: E501
 )
 async def get_indicator(indicator_id: str, request: Request) -> IndicatorDetail:
+    if not is_valid_uuid(indicator_id):
+        raise HTTPException(status_code=400, detail="Invalid indicator ID format")
+
     cache = request.app.state.cache_service
     opensearch = request.app.state.opensearch_service
+    safe_key = sanitize_cache_key_segment(indicator_id)
 
     async def fetch() -> dict[str, Any] | None:
         result: dict[str, Any] | None = await opensearch.get_indicator(indicator_id)
         return result
 
-    result = await cache.get_or_fetch(f"indicator:{indicator_id}", 300, fetch)
+    result = await cache.get_or_fetch(f"indicator:{safe_key}", 300, fetch)
     if result is None:
         raise HTTPException(status_code=404, detail="Indicator not found")
     return IndicatorDetail(**result)

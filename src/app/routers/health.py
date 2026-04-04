@@ -12,6 +12,10 @@ router = APIRouter(tags=["Health"])
 TIMEOUT = 2.0
 
 
+async def _always_down() -> bool:
+    return False
+
+
 async def _check_service(name: str, check_fn: Callable[[], Awaitable[bool]]) -> tuple[str, ServiceStatus]:
     start = time.perf_counter()
     try:
@@ -31,11 +35,20 @@ async def _check_service(name: str, check_fn: Callable[[], Awaitable[bool]]) -> 
     description="Check connectivity to all backing services.",
 )
 async def health_check(request: Request) -> JSONResponse:
-    checks = await asyncio.gather(
-        _check_service("opensearch", request.app.state.opensearch_service.check_health),
-        _check_service("postgresql", request.app.state.postgres_service.check_health),
-        _check_service("redis", request.app.state.redis_service.ping),
-    )
+    service_checks: list[tuple[str, Callable[[], Awaitable[bool]]]] = []
+    for name, attr in [
+        ("opensearch", "opensearch_service"),
+        ("postgresql", "postgres_service"),
+        ("redis", "redis_service"),
+    ]:
+        svc = getattr(request.app.state, attr, None)
+        if svc:
+            fn = svc.check_health if name != "redis" else svc.ping
+            service_checks.append((name, fn))
+        else:
+            service_checks.append((name, _always_down))
+
+    checks = await asyncio.gather(*[_check_service(n, fn) for n, fn in service_checks])
 
     services = {name: status for name, status in checks}
     up_count = sum(1 for s in services.values() if s.status == "up")
