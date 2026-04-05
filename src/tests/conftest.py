@@ -89,9 +89,12 @@ def mock_opensearch() -> OpenSearchService:
 @pytest.fixture
 def mock_postgres() -> PostgresService:
     mock = AsyncMock(spec=PostgresService)
+    mock.get_campaign_timeline_from_summary.return_value = None
     mock.get_campaign_timeline.return_value = SAMPLE_TIMELINE.copy()
     mock.get_dashboard_summary.return_value = SAMPLE_DASHBOARD.copy()
+    mock.upsert_campaign_timeline_summary.return_value = None
     mock.check_health.return_value = True
+    mock._get_read_session = AsyncMock()
     return mock
 
 

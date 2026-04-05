@@ -83,6 +83,57 @@ async def test_opensearch_compound_nested_query(os_client: AsyncOpenSearch):
 
 
 @pytest.mark.asyncio
+async def test_olap_indexes_exist(pg_pool: asyncpg.Pool):
+    async with pg_pool.acquire() as conn:
+        indexes = await conn.fetch(
+            "SELECT indexname FROM pg_indexes WHERE tablename IN ('campaign_indicators', 'indicators', 'campaigns')"
+        )
+        names = {r["indexname"] for r in indexes}
+        assert "idx_campaign_indicators_campaign_observed" in names
+        assert "idx_campaign_indicators_observed" in names
+        assert "idx_indicators_first_seen_type" in names
+        assert "idx_campaigns_status" in names
+
+
+@pytest.mark.asyncio
+async def test_campaign_timeline_summary_populated(pg_pool: asyncpg.Pool):
+    async with pg_pool.acquire() as conn:
+        count = await conn.fetchval("SELECT COUNT(*) FROM campaign_timeline_summary")
+        assert count > 0, "Summary table should be populated by seed"
+
+        row = await conn.fetchrow("SELECT * FROM campaign_timeline_summary WHERE granularity = 'day' LIMIT 1")
+        assert row is not None
+        assert row["total_count"] > 0
+        import json
+
+        counts = json.loads(row["type_counts"])
+        assert isinstance(counts, dict)
+
+
+@pytest.mark.asyncio
+async def test_campaign_timeline_uses_index(pg_pool: asyncpg.Pool):
+    async with pg_pool.acquire() as conn:
+        campaign_id = await conn.fetchval(
+            "SELECT campaign_id FROM campaign_indicators GROUP BY campaign_id ORDER BY COUNT(*) DESC LIMIT 1"
+        )
+        assert campaign_id is not None
+
+        plan = await conn.fetch(
+            """
+            EXPLAIN (FORMAT TEXT)
+            SELECT date_trunc('day', ci.observed_at), i.type, COUNT(*)
+            FROM campaign_indicators ci
+            JOIN indicators i ON i.id = ci.indicator_id
+            WHERE ci.campaign_id = $1
+            GROUP BY 1, 2
+        """,
+            campaign_id,
+        )
+        plan_text = "\n".join(r[0] for r in plan)
+        assert "Seq Scan on campaign_indicators" not in plan_text
+
+
+@pytest.mark.asyncio
 async def test_postgres_campaign_timeline_aggregation(pg_pool: asyncpg.Pool):
     async with pg_pool.acquire() as conn:
         campaign_id = await conn.fetchval(

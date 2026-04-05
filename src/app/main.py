@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from app.config import get_settings
 from app.middleware import CorrelationIdMiddleware
 from app.routers import campaigns, dashboard, health, indicators
-from app.services.background import run_periodic_precompute
+from app.services.background import run_dashboard_precompute, run_timeline_precompute
 from app.services.cache import CacheService
 from app.services.opensearch import OpenSearchService
 from app.services.postgres import PostgresService
@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     redis_service = RedisService(settings.redis_url)
     opensearch_service = OpenSearchService(settings.opensearch_url)
-    postgres_service = PostgresService(settings.postgres_dsn)
+    postgres_service = PostgresService(settings.postgres_dsn, settings.postgres_read_dsn)
 
     await redis_service.connect()
     try:
@@ -62,15 +62,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.postgres_service = postgres_service
     app.state.cache_service = cache_service
 
-    bg_task = asyncio.create_task(
-        run_periodic_precompute(redis_service, postgres_service, settings.dashboard_refresh_interval)
+    dashboard_task = asyncio.create_task(
+        run_dashboard_precompute(redis_service, postgres_service, settings.dashboard_refresh_interval)
+    )
+    timeline_task = asyncio.create_task(
+        run_timeline_precompute(redis_service, postgres_service, settings.timeline_refresh_interval)
     )
 
     yield
 
-    bg_task.cancel()
+    dashboard_task.cancel()
+    timeline_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
-        await bg_task
+        await dashboard_task
+    with contextlib.suppress(asyncio.CancelledError):
+        await timeline_task
 
     await opensearch_service.close()
     await postgres_service.close()

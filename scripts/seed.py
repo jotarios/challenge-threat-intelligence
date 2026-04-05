@@ -105,6 +105,7 @@ def seed_postgres(tables: dict):
     engine = create_engine(POSTGRES_DSN)
 
     truncate_order = [
+        "campaign_timeline_summary",
         "observations",
         "indicator_relationships",
         "campaign_indicators",
@@ -333,6 +334,107 @@ def seed_opensearch(docs: list[dict]):
     client.close()
 
 
+def populate_summary_tables():
+    print("\nPopulating summary tables...")
+    engine = create_engine(POSTGRES_DSN)
+    with Session(engine) as session:
+        for granularity in ("day", "week"):
+            session.execute(
+                text(
+                    f"""
+                INSERT INTO campaign_timeline_summary
+                    (campaign_id, granularity, period, type_counts, indicator_sample,
+                     total_count, total_indicators, unique_ips, unique_domains, duration_days)
+                SELECT
+                    agg.campaign_id,
+                    '{granularity}',
+                    agg.period,
+                    json_object_agg(agg.type, agg.cnt),
+                    '[]',
+                    SUM(agg.cnt)::int,
+                    stats.total_indicators,
+                    stats.unique_ips,
+                    stats.unique_domains,
+                    stats.duration_days
+                FROM (
+                    SELECT
+                        ci.campaign_id,
+                        date_trunc('{granularity}', ci.observed_at) AS period,
+                        i.type,
+                        COUNT(*) AS cnt
+                    FROM campaign_indicators ci
+                    JOIN indicators i ON i.id = ci.indicator_id
+                    WHERE ci.observed_at IS NOT NULL
+                    GROUP BY ci.campaign_id, date_trunc('{granularity}', ci.observed_at), i.type
+                ) agg
+                JOIN (
+                    SELECT
+                        ci2.campaign_id,
+                        COUNT(DISTINCT ci2.indicator_id)::int AS total_indicators,
+                        COUNT(DISTINCT CASE WHEN i2.type = 'ip' THEN i2.id END)::int AS unique_ips,
+                        COUNT(DISTINCT CASE WHEN i2.type = 'domain' THEN i2.id END)::int AS unique_domains,
+                        COALESCE(
+                            EXTRACT(DAY FROM MAX(c.last_seen) - MIN(c.first_seen))::int, 0
+                        ) AS duration_days
+                    FROM campaign_indicators ci2
+                    JOIN indicators i2 ON i2.id = ci2.indicator_id
+                    JOIN campaigns c ON c.id = ci2.campaign_id
+                    WHERE ci2.observed_at IS NOT NULL
+                    GROUP BY ci2.campaign_id
+                ) stats ON stats.campaign_id = agg.campaign_id
+                GROUP BY agg.campaign_id, agg.period,
+                         stats.total_indicators, stats.unique_ips,
+                         stats.unique_domains, stats.duration_days
+                """
+                )
+            )
+        session.commit()
+
+        for granularity in ("day", "week"):
+            session.execute(
+                text(
+                    f"""
+                UPDATE campaign_timeline_summary cts
+                SET indicator_sample = sub.sample
+                FROM (
+                    SELECT
+                        ranked.campaign_id,
+                        ranked.period,
+                        json_agg(json_build_object(
+                            'id', ranked.ind_id,
+                            'type', ranked.ind_type,
+                            'value', ranked.ind_value
+                        )) AS sample
+                    FROM (
+                        SELECT
+                            ci.campaign_id,
+                            date_trunc('{granularity}', ci.observed_at) AS period,
+                            i.id AS ind_id,
+                            i.type AS ind_type,
+                            i.value AS ind_value,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY ci.campaign_id, date_trunc('{granularity}', ci.observed_at)
+                                ORDER BY i.id
+                            ) AS rn
+                        FROM campaign_indicators ci
+                        JOIN indicators i ON i.id = ci.indicator_id
+                        WHERE ci.observed_at IS NOT NULL
+                    ) ranked
+                    WHERE ranked.rn <= 20
+                    GROUP BY ranked.campaign_id, ranked.period
+                ) sub
+                WHERE cts.campaign_id = sub.campaign_id
+                  AND cts.granularity = '{granularity}'
+                  AND cts.period = sub.period
+                """
+                )
+            )
+        session.commit()
+        count = session.execute(text("SELECT COUNT(*) FROM campaign_timeline_summary")).scalar_one()
+        print(f"  campaign_timeline_summary: {count} rows")
+    engine.dispose()
+
+
 def verify_counts():
     print("\n--- Verification ---")
     engine = create_engine(POSTGRES_DSN)
@@ -345,6 +447,7 @@ def verify_counts():
             "campaign_indicators",
             "indicator_relationships",
             "observations",
+            "campaign_timeline_summary",
         ]:
             count = session.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar_one()
             print(f"  PostgreSQL {table}: {count}")
@@ -367,6 +470,7 @@ def main():
     tables = load_sqlite()
 
     seed_postgres(tables)
+    populate_summary_tables()
 
     docs = build_opensearch_docs(tables)
     seed_opensearch(docs)
