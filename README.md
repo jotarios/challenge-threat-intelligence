@@ -34,6 +34,7 @@ CQRS with polyglot persistence: OpenSearch for real-time indicator lookups, Post
 - Docker and Docker Compose
 - Python 3.12+
 - `pip install ".[dev]"` (for running seed script, tests, and dev tools locally)
+- [k6](https://grafana.com/docs/k6/) (for load testing, install via `brew install k6`)
 
 ## Quick Start
 
@@ -93,7 +94,30 @@ curl http://localhost:8000/health
 | `make format` | Run ruff formatter + auto-fix lint issues |
 | `make typecheck` | Run mypy in strict mode |
 | `make check` | Run lint + typecheck + tests |
+| `make loadtest` | Run k6 load test (50 VUs, 30s) against running services |
+| `make loadtest-heavy` | Run k6 stress test (200 VUs, 60s) against running services |
 | `make logs` | Tail FastAPI application logs |
+
+## Load Testing
+
+The project includes a [k6](https://grafana.com/docs/k6/) load test that exercises all API endpoints with realistic traffic distribution and validates against the SLA targets from the PRD.
+
+```bash
+make up            # Start services
+make loadtest      # 50 virtual users, 30 seconds
+make loadtest-heavy # 200 virtual users, 60 seconds (stress test)
+```
+
+The test automatically discovers real indicator and campaign IDs during a warmup phase, then generates traffic with this distribution: 40% search, 30% indicator detail, 15% campaign timeline, 10% dashboard, 5% health.
+
+k6 thresholds enforce the PRD performance requirements:
+- Real-time endpoints (indicators, health): p95 < 100ms
+- Analytical endpoints (campaigns, dashboard): p95 < 250ms
+- Error rate: < 1%
+
+The test exits with a non-zero code if any threshold is breached, making it suitable for CI pipelines.
+
+You can override the target URL with `BASE_URL=http://remote:8000 make loadtest`.
 
 ## Project Structure
 
@@ -120,6 +144,7 @@ src/
     test_integration.py# Integration tests (real Docker services)
 scripts/
   seed.py              # ETL: runs migrations, then SQLite -> OpenSearch + PostgreSQL
+  k6_loadtest.js       # k6 load test with per-endpoint SLA thresholds
 data/
   schema.sql           # Original SQL schema (reference only, models are in src/app/db.py)
   threat_intel.db      # SQLite seed data (gitignored)
