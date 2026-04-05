@@ -6,6 +6,7 @@ services:
     environment:
       OPENSEARCH_URL: http://opensearch:9200
       POSTGRES_DSN: postgresql://postgres:postgres@postgres:5432/postgres
+      POSTGRES_READ_DSN: postgresql://postgres:postgres@postgres:5432/postgres
       REDIS_URL: redis://redis:6379
       LOG_LEVEL: INFO
     depends_on:

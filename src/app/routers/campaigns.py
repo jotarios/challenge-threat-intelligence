@@ -44,6 +44,14 @@ async def get_campaign_timeline(
     cache_key = f"campaign:{safe_key}:timeline:{params.group_by}:{start_str}:{end_str}"
 
     async def fetch() -> dict[str, Any] | None:
+        summary_result: dict[str, Any] | None = await postgres.get_campaign_timeline_from_summary(
+            campaign_id,
+            params.group_by,
+            str(params.start_date) if params.start_date else None,
+            str(params.end_date) if params.end_date else None,
+        )
+        if summary_result is not None:
+            return summary_result
         result: dict[str, Any] | None = await postgres.get_campaign_timeline(
             campaign_id,
             params.group_by,

@@ -23,9 +23,19 @@ CQRS with polyglot persistence:
 
 - Docker Compose orchestrates FastAPI + OpenSearch + PostgreSQL + Redis
 - PostgreSQL substitutes for Redshift locally (standard SQL only, no Redshift-specific features)
+- Read/write DSN separation: `POSTGRES_READ_DSN` points to read replica (Redshift in production, same PG locally)
 - SQLAlchemy models in `src/app/db.py` are the source of truth for the database schema
 - Alembic migrations in `alembic/versions/` are auto-generated from the SQLAlchemy models
 - Seed data: `data/threat_intel.db` (SQLite, gitignored) — 10K indicators, 50 threat actors, 100 campaigns with relationships
+
+### AWS Service Mapping (production)
+
+| AWS Service | Local Equivalent | Purpose |
+|---|---|---|
+| AWS Redshift | PostgreSQL 16 container | Historical tier (OLAP queries) |
+| AWS ElastiCache | Redis 7 container | Cache layer + pre-computed views |
+| AWS OpenSearch Service | OpenSearch 2 container | Hot tier search |
+| AWS Kinesis / Firehose | Not yet implemented | Future: ingestion pipeline |
 
 ### Commands
 
