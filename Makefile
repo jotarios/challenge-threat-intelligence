@@ -1,4 +1,4 @@
-.PHONY: up down seed migrate revision test test-integration logs lint format typecheck check
+.PHONY: up down seed migrate revision test test-integration logs lint format typecheck check loadtest
 
 up:
 	docker compose up -d
@@ -35,3 +35,6 @@ typecheck:
 	PYTHONPATH=src mypy src/app/
 
 check: lint typecheck test
+
+loadtest:
+	k6 run scripts/k6_loadtest.js
