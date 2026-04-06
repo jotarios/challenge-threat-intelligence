@@ -1,7 +1,7 @@
 .PHONY: up down seed migrate revision test test-integration logs lint format typecheck check loadtest
 
 up:
-	docker compose up -d
+	docker compose up -d --build
 
 down:
 	docker compose down -v
