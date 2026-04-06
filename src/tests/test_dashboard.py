@@ -31,3 +31,10 @@ async def test_dashboard_invalid_range(client: AsyncClient):
     resp = await client.get("/api/dashboard/summary", params={"time_range": "1y"})
     assert resp.status_code == 400
     assert "Invalid time_range" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_dashboard_rejects_unknown_params(client: AsyncClient):
+    resp = await client.get("/api/dashboard/summary", params={"time_range": "7d", "foo": "bar"})
+    assert resp.status_code == 422
+    assert "foo" in resp.json()["detail"]

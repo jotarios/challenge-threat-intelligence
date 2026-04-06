@@ -3,10 +3,12 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.models.dashboard import DashboardSummary
+from app.sanitize import reject_unknown_params
 
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
 
 VALID_RANGES = {"24h", "7d", "30d"}
+_ALLOWED_SUMMARY_PARAMS = frozenset({"time_range"})
 
 
 @router.get(
@@ -19,6 +21,7 @@ async def get_dashboard_summary(
     request: Request,
     time_range: str = Query("7d", description="Time range: 24h, 7d, or 30d"),
 ) -> DashboardSummary:
+    reject_unknown_params(request, _ALLOWED_SUMMARY_PARAMS)
     if time_range not in VALID_RANGES:
         raise HTTPException(status_code=400, detail=f"Invalid time_range. Must be one of: {', '.join(VALID_RANGES)}")
 

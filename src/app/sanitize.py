@@ -1,4 +1,8 @@
 import re
+from collections.abc import Collection
+
+from fastapi import HTTPException
+from starlette.requests import Request
 
 MAX_QUERY_LENGTH = 256
 
@@ -21,3 +25,9 @@ def is_valid_uuid(value: str) -> bool:
 
 def sanitize_cache_key_segment(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_\-]", "", value)
+
+
+def reject_unknown_params(request: Request, allowed: Collection[str]) -> None:
+    unknown = set(request.query_params.keys()) - set(allowed)
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Unknown query parameters: {', '.join(sorted(unknown))}")

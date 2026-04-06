@@ -56,3 +56,13 @@ async def test_campaign_start_after_end(client: AsyncClient):
         params={"start_date": "2025-01-01", "end_date": "2024-01-01"},
     )
     assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_campaign_rejects_unknown_params(client: AsyncClient):
+    resp = await client.get(
+        f"/api/campaigns/{VALID_CAMPAIGN_ID}/indicators",
+        params={"group_by": "day", "foo": "bar"},
+    )
+    assert resp.status_code == 422
+    assert "foo" in resp.json()["detail"]

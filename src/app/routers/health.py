@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request
 from starlette.responses import JSONResponse
 
 from app.models.health import HealthResponse, ServiceStatus
+from app.sanitize import reject_unknown_params
 
 router = APIRouter(tags=["Health"])
 
@@ -35,6 +36,7 @@ async def _check_service(name: str, check_fn: Callable[[], Awaitable[bool]]) -> 
     description="Check connectivity to all backing services.",
 )
 async def health_check(request: Request) -> JSONResponse:
+    reject_unknown_params(request, set())
     service_checks: list[tuple[str, Callable[[], Awaitable[bool]]]] = []
     for name, attr in [
         ("opensearch", "opensearch_service"),

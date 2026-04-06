@@ -33,3 +33,10 @@ async def test_health_all_down(client: AsyncClient, mock_opensearch, mock_postgr
     assert resp.status_code == 503
     data = resp.json()
     assert data["status"] == "unhealthy"
+
+
+@pytest.mark.asyncio
+async def test_health_rejects_unknown_params(client: AsyncClient):
+    resp = await client.get("/health", params={"foo": "bar"})
+    assert resp.status_code == 422
+    assert "foo" in resp.json()["detail"]

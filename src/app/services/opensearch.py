@@ -80,7 +80,7 @@ class OpenSearchService:
                 {
                     "nested": {
                         "path": "threat_actors",
-                        "query": {"match": {"threat_actors.name": params.threat_actor}},
+                        "query": {"term": {"threat_actors.id": params.threat_actor}},
                     }
                 }
             )
@@ -90,7 +90,7 @@ class OpenSearchService:
                 {
                     "nested": {
                         "path": "campaigns",
-                        "query": {"match": {"campaigns.name": params.campaign}},
+                        "query": {"term": {"campaigns.id": params.campaign}},
                     }
                 }
             )
