@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     rate_limit_capacity: int = 100
     rate_limit_window_seconds: int = 60
     rate_limit_exempt_paths: str = "/docs,/openapi.json"
+    rate_limit_trusted_proxies: str = ""
 
     model_config = {"env_prefix": "", "case_sensitive": False}
 

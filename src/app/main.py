@@ -74,6 +74,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             p.strip() for p in settings.rate_limit_exempt_paths.split(",") if p.strip()
         }
         app.state.rate_limit_capacity = settings.rate_limit_capacity
+        app.state.rate_limit_trusted_proxies = {
+            p.strip() for p in settings.rate_limit_trusted_proxies.split(",") if p.strip()
+        }
     else:
         app.state.rate_limiter = None
 
