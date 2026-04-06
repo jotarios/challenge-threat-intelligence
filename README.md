@@ -29,6 +29,48 @@ CQRS with polyglot persistence: OpenSearch for real-time indicator lookups, Post
          Endpoints 1&2     All endpoints    Endpoints 3&4
 ```
 
+### Final Thoughts
+
+**Why Polyglot Persistence?**
+
+- Gain: Each store is optimized for its access pattern: OpenSearch for sub-100ms full-text search, PostgreSQL/Redshift for complex analytical joins, Redis for sub-millisecond cached reads. Hot and Cold tiers scale independently.
+- Trade-off: Operational complexity, Data consistency and overhead.
+- Alternative considered: A single PostgreSQL instance with materialized views could serve all four endpoints at the scale of 10K indicators. The polyglot approach is justified only at the stated 100M+ indicator target.
+
+**Why CQRS — Read-Only API with External Ingestion?**
+
+- Gain: The API surface is simple and cacheable — no write-path complexity (conflict resolution, write-through invalidation, optimistic locking).
+- Trade-off: In this particular challenge, I haven't worked on the ingestion path, however eventual consistency is the choiced option, for a real-time security dashboard, stale indicators during a high-velocity attack could mean missed detections.
+- Alternative considered: Ingestion can scale independently via Kinesis/Firehose without affecting query latency.
+
+**Why OpenSearch/ElasticSearch?**
+
+- Gain: A single query returns the full indicator context (actors, campaigns, related indicators) — no joins, no fan-out, no N+1.
+- Trade-off: Update amplification. Search filters use IDs (`campaigns.id`, `threat_actors.id`), so query correctness is not affected by stale display fields. However, denormalized display fields (campaign name, actor name, active status) are embedded in every indicator document. Updating these fields still requires touching every linked document — at 100M indicators this is a heavy reindexing operation, even though it only affects response rendering, not query accuracy.
+- Alternative considered: Store only IDs in OpenSearch, resolve names at query time. If in the future we want to add search by campaign name, we should consider it.
+
+**Why Redis Cache-Aside with TTL-Based Expiry?**
+
+- Gain: Simple implementation — no distributed invalidation protocol, no pub/sub, no versioning. Also, Graceful degradation. if Redis is down, the system falls back to source databases with higher latency but no data loss.
+- Trade-off: No proactive invalidation and cache stampede risk.
+- Alternative considered: As I said before, I haven't worked on the ingestion path, but this should be considered when it is done.
+
+**Why Background Precomputation Workers?**
+
+- Gain: Dashboard and timeline endpoints serve precomputed results from Redis, meeting the <250ms p95 target without running expensive aggregations on the hot path. The `campaign_timeline_summary` table in PostgreSQL acts as a materialized cache, reducing repeated analytical query load on the read replica.
+- Trade-off: Single-instance assumption, so no distributed coordination implemented. There is no leader election, distributed lock, or deduplication. Multiple replicas precomputing the same dashboard summary waste resources.
+- Alternative considered: Dedicated and distributed worker processes (Celery / ECS scheduled task / Lambda).
+
+**Why Read/Write DSN Separation (PostgreSQL vs. Redshift) or OLAP?**
+
+- Gain: Analytical queries (endpoints 3 & 4) can target a read replica or Redshift without affecting the write primary. Local development uses the same PostgreSQL instance for both DSNs, keeping the local stack simple.
+- Trade-off: SQL dialect divergence and replication lag. In production, the read replica introduces replication lag. Combined with the cache TTL, an analyst could see data that is stale by replication_lag + TTL seconds, but the system does not surface this to the user.
+- Alternative considred: Single PostgreSQL with read replicas, no Redshift. It will depends of the scale.
+
+**What I'd improve with more time?**
+
+- Build the ingestion pipeline and implement the GitHub Actions CI/CD + AWS Cloud deployment.
+
 ## Prerequisites
 
 - Docker and Docker Compose
@@ -39,13 +81,16 @@ CQRS with polyglot persistence: OpenSearch for real-time indicator lookups, Post
 ## Quick Start
 
 ```bash
-make up          # Start OpenSearch, PostgreSQL, Redis, and FastAPI
-make seed        # Run migrations + load 10K indicators from seed data
+# Start OpenSearch, PostgreSQL, Redis, and FastAPI
+make up
+
+# Run migrations + load 10K indicators from seed data
+make seed
 ```
 
-Visit http://localhost:8000/docs for the interactive API docs
-
 ## API Endpoints
+
+Visit http://localhost:8000/docs for the interactive API docs
 
 | Method | Path | Description | Data Source |
 |--------|------|-------------|-------------|
@@ -54,31 +99,6 @@ Visit http://localhost:8000/docs for the interactive API docs
 | GET | `/api/campaigns/{id}/indicators` | Campaign timeline grouped by day/week | Redis -> PostgreSQL |
 | GET | `/api/dashboard/summary` | Landing page stats (24h/7d/30d) | Redis (pre-computed) |
 | GET | `/health` | Service connectivity check | All services |
-
-## Rate Limiting
-
-All endpoints (including `/health`) are rate-limited using a token bucket algorithm backed by Redis. Each client IP gets a bucket of tokens that refills over time.
-
-Default configuration: 100 requests per 60 seconds per client IP. Responses include standard headers:
-
-| Header | Description |
-|--------|-------------|
-| `X-RateLimit-Limit` | Bucket capacity |
-| `X-RateLimit-Remaining` | Tokens left after this request |
-| `Retry-After` | Seconds until a token is available (429 responses only) |
-
-When the bucket is empty, the API returns HTTP 429 with a `Retry-After` header.
-
-Configuration via environment variables:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `RATE_LIMIT_ENABLED` | `true` | Enable/disable rate limiting |
-| `RATE_LIMIT_CAPACITY` | `100` | Max burst size (tokens) |
-| `RATE_LIMIT_WINDOW_SECONDS` | `60` | Refill period |
-| `RATE_LIMIT_EXEMPT_PATHS` | `/docs,/openapi.json` | Comma-separated paths to exempt |
-
-If Redis is unavailable, the rate limiter fails open (requests are allowed through).
 
 ## Example Requests
 
@@ -105,6 +125,7 @@ curl "http://localhost:8000/api/dashboard/summary?time_range=24h"
 curl http://localhost:8000/health
 ```
 
+
 ## Make Targets
 
 | Command | Description |
@@ -122,6 +143,31 @@ curl http://localhost:8000/health
 | `make check` | Run lint + typecheck + tests |
 | `make loadtest` | Run k6 load test (50 VUs, 30s) against running services |
 | `make logs` | Tail FastAPI application logs |
+
+## Rate Limiting
+
+All endpoints are rate-limited using a token bucket algorithm backed by Redis. Each client IP gets a bucket of tokens that refills over time.
+
+Default configuration: 100 requests per 60 seconds per client IP. Responses include standard headers:
+
+| Header | Description |
+|--------|-------------|
+| `X-RateLimit-Limit` | Bucket capacity |
+| `X-RateLimit-Remaining` | Tokens left after this request |
+| `Retry-After` | Seconds until a token is available (429 responses only) |
+
+When the bucket is empty, the API returns HTTP 429 with a `Retry-After` header.
+
+Configuration via environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RATE_LIMIT_ENABLED` | `true` | Enable/disable rate limiting |
+| `RATE_LIMIT_CAPACITY` | `100` | Max burst size (tokens) |
+| `RATE_LIMIT_WINDOW_SECONDS` | `60` | Refill period |
+| `RATE_LIMIT_EXEMPT_PATHS` | `/docs,/openapi.json` | Comma-separated paths to exempt |
+
+If Redis is unavailable, the rate limiter fails open (requests are allowed through).
 
 ## Load Testing
 
