@@ -9,12 +9,13 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
-from app.middleware import CorrelationIdMiddleware
+from app.middleware import CorrelationIdMiddleware, RateLimitMiddleware
 from app.routers import campaigns, dashboard, health, indicators
 from app.services.background import run_dashboard_precompute, run_timeline_precompute
 from app.services.cache import CacheService
 from app.services.opensearch import OpenSearchService
 from app.services.postgres import PostgresService
+from app.services.rate_limiter import RateLimiter
 from app.services.redis_client import RedisService
 
 
@@ -62,6 +63,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.postgres_service = postgres_service
     app.state.cache_service = cache_service
 
+    if settings.rate_limit_enabled and redis_service.client is not None:
+        refill_rate = settings.rate_limit_capacity / settings.rate_limit_window_seconds
+        app.state.rate_limiter = RateLimiter(
+            redis_client=redis_service.client,
+            capacity=settings.rate_limit_capacity,
+            refill_rate=refill_rate,
+        )
+        app.state.rate_limit_exempt_paths = {
+            p.strip() for p in settings.rate_limit_exempt_paths.split(",") if p.strip()
+        }
+        app.state.rate_limit_capacity = settings.rate_limit_capacity
+    else:
+        app.state.rate_limiter = None
+
     dashboard_task = asyncio.create_task(
         run_dashboard_precompute(redis_service, postgres_service, settings.dashboard_refresh_interval)
     )
@@ -92,6 +107,7 @@ app = FastAPI(
 )
 
 app.add_middleware(CorrelationIdMiddleware)
+app.add_middleware(RateLimitMiddleware)
 app.include_router(indicators.router)
 app.include_router(campaigns.router)
 app.include_router(dashboard.router)

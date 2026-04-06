@@ -57,6 +57,10 @@ class RedisService:
         if self._client:
             await self._client.aclose()
 
+    @property
+    def client(self) -> aioredis.Redis | None:
+        return self._client
+
     async def ping(self) -> bool:
         if not self._client:
             return False
