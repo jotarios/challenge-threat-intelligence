@@ -166,6 +166,9 @@ Configuration via environment variables:
 | `RATE_LIMIT_CAPACITY` | `100` | Max burst size (tokens) |
 | `RATE_LIMIT_WINDOW_SECONDS` | `60` | Refill period |
 | `RATE_LIMIT_EXEMPT_PATHS` | `/docs,/openapi.json` | Comma-separated paths to exempt |
+| `RATE_LIMIT_TRUSTED_PROXIES` | _(empty)_ | Comma-separated IPs allowed to set `X-Forwarded-For` |
+
+The `X-Forwarded-For` header is only trusted when the direct connecting IP is listed in `RATE_LIMIT_TRUSTED_PROXIES`. This prevents clients from spoofing their IP to bypass rate limits. If running behind a load balancer, set this to the balancer's IP(s).
 
 If Redis is unavailable, the rate limiter fails open (requests are allowed through).
 

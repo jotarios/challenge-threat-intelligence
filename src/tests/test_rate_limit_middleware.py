@@ -36,6 +36,7 @@ def _setup_app_state(
     app.state.rate_limiter = limiter
     app.state.rate_limit_capacity = 100
     app.state.rate_limit_exempt_paths = {"/docs", "/openapi.json"}
+    app.state.rate_limit_trusted_proxies: set[str] = set()
     app.state.redis_service = mock_redis
     app.state.opensearch_service = mock_opensearch
     app.state.postgres_service = mock_postgres
@@ -149,14 +150,38 @@ async def test_disabled_rate_limiter_passes_through(
 
 
 @pytest.mark.asyncio
-async def test_x_forwarded_for_used_as_client_id(
+async def test_x_forwarded_for_ignored_from_untrusted_client(
     limiter_allowed: AsyncMock,
     mock_redis: AsyncMock,
     mock_opensearch: AsyncMock,
     mock_postgres: AsyncMock,
     mock_cache: CacheService,
 ) -> None:
+    """XFF header from a direct (untrusted) client must be ignored to prevent rate-limit bypass."""
     _setup_app_state(limiter_allowed, mock_redis, mock_opensearch, mock_postgres, mock_cache)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            "/api/indicators/search",
+            headers={"X-Forwarded-For": "10.0.0.1, 192.168.1.1"},
+        )
+    assert resp.status_code == 200
+    # Should use the direct connection IP, NOT the spoofed XFF value
+    call_arg = limiter_allowed.acquire.call_args[0][0]
+    assert call_arg != "10.0.0.1"
+
+
+@pytest.mark.asyncio
+async def test_x_forwarded_for_trusted_when_proxy_is_configured(
+    limiter_allowed: AsyncMock,
+    mock_redis: AsyncMock,
+    mock_opensearch: AsyncMock,
+    mock_postgres: AsyncMock,
+    mock_cache: CacheService,
+) -> None:
+    """XFF header should be used when the direct client IP is in the trusted proxies set."""
+    _setup_app_state(limiter_allowed, mock_redis, mock_opensearch, mock_postgres, mock_cache)
+    # httpx ASGI transport uses "127.0.0.1" as the client host
+    app.state.rate_limit_trusted_proxies = {"127.0.0.1"}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.get(
             "/api/indicators/search",

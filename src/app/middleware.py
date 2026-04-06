@@ -17,11 +17,13 @@ logger = structlog.get_logger()
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     @staticmethod
-    def _get_client_ip(request: Request) -> str:
-        forwarded = request.headers.get("x-forwarded-for")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
-        return request.client.host if request.client else "unknown"
+    def _get_client_ip(request: Request, trusted_proxies: set[str]) -> str:
+        direct_ip = request.client.host if request.client else "unknown"
+        if direct_ip in trusted_proxies:
+            forwarded = request.headers.get("x-forwarded-for")
+            if forwarded:
+                return forwarded.split(",")[0].strip()
+        return direct_ip
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         limiter: RateLimiter | None = getattr(request.app.state, "rate_limiter", None)
@@ -31,10 +33,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         exempt_paths: set[str] = getattr(request.app.state, "rate_limit_exempt_paths", set())
         capacity: int = getattr(request.app.state, "rate_limit_capacity", 100)
 
+        trusted_proxies: set[str] = getattr(request.app.state, "rate_limit_trusted_proxies", set())
+
         if request.url.path in exempt_paths:
             return await call_next(request)
 
-        client_ip = self._get_client_ip(request)
+        client_ip = self._get_client_ip(request, trusted_proxies)
         allowed, remaining, retry_after = await limiter.acquire(client_ip)
 
         if not allowed:
