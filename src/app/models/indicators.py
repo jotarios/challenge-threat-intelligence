@@ -83,8 +83,8 @@ class SearchParams(BaseModel):
         None, description="Indicator type: ip, domain, url, hash"
     )
     value: str | None = Field(None, max_length=256, description="Partial match on indicator value")
-    threat_actor: str | None = Field(None, max_length=256, description="Filter by threat actor name")
-    campaign: str | None = Field(None, max_length=256, description="Filter by campaign name")
+    threat_actor: str | None = Field(None, max_length=256, description="Filter by threat actor ID")
+    campaign: str | None = Field(None, max_length=256, description="Filter by campaign ID")
     first_seen_after: datetime | None = Field(None, description="Indicators first seen after this date")
     last_seen_before: datetime | None = Field(None, description="Indicators last seen before this date")
     page: int = Field(1, ge=1, description="Page number (1-based)")

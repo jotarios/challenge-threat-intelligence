@@ -90,7 +90,7 @@ curl http://localhost:8000/api/indicators/550e8400-e29b-41d4-a716-446655440000
 curl "http://localhost:8000/api/indicators/search?type=ip&limit=5"
 
 # Search with multiple filters
-curl "http://localhost:8000/api/indicators/search?type=domain&threat_actor=APT-North&page=1&limit=20"
+curl "http://localhost:8000/api/indicators/search?type=domain&threat_actor=actor-123&page=1&limit=20"
 
 # Campaign timeline
 curl "http://localhost:8000/api/campaigns/camp-456/indicators?group_by=day"
@@ -114,7 +114,7 @@ curl http://localhost:8000/health
 | `make seed` | Run Alembic migrations + load seed data into OpenSearch and PostgreSQL |
 | `make migrate` | Run Alembic migrations to head |
 | `make revision msg="..."` | Auto-generate a new Alembic migration from model changes |
-| `make test` | Run unit tests (44 tests) |
+| `make test` | Run unit tests (57 tests) |
 | `make test-integration` | Run integration tests (requires running services + seed data) |
 | `make lint` | Run ruff linter |
 | `make format` | Run ruff formatter + auto-fix lint issues |

@@ -5,16 +5,20 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import ValidationError
 
 from app.models.campaigns import CampaignTimeline, TimelineParams
-from app.sanitize import is_valid_uuid, sanitize_cache_key_segment
+from app.sanitize import is_valid_uuid, reject_unknown_params, sanitize_cache_key_segment
 
 router = APIRouter(prefix="/api/campaigns", tags=["Campaigns"])
 
+_ALLOWED_TIMELINE_PARAMS = frozenset(TimelineParams.model_fields.keys())
+
 
 def get_timeline_params(
+    request: Request,
     group_by: str = Query("day", pattern="^(day|week)$", description="Group timeline by day or week"),
     start_date: date | None = Query(None, description="Start date for timeline range"),
     end_date: date | None = Query(None, description="End date for timeline range"),
 ) -> TimelineParams:
+    reject_unknown_params(request, _ALLOWED_TIMELINE_PARAMS)
     try:
         return TimelineParams(group_by=group_by, start_date=start_date, end_date=end_date)
     except ValidationError as e:

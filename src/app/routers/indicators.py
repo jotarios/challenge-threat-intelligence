@@ -5,21 +5,25 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.models.indicators import IndicatorDetail, IndicatorSearchItem, SearchParams, SearchResponse
-from app.sanitize import is_valid_uuid, sanitize_cache_key_segment
+from app.sanitize import is_valid_uuid, reject_unknown_params, sanitize_cache_key_segment
 
 router = APIRouter(prefix="/api/indicators", tags=["Indicators"])
 
+_ALLOWED_SEARCH_PARAMS = frozenset(SearchParams.model_fields.keys())
+
 
 def get_search_params(
+    request: Request,
     type: str | None = Query(None, description="Indicator type: ip, domain, url, hash"),
     value: str | None = Query(None, description="Partial match on indicator value"),
-    threat_actor: str | None = Query(None, description="Filter by threat actor name"),
-    campaign: str | None = Query(None, description="Filter by campaign name"),
+    threat_actor: str | None = Query(None, description="Filter by threat actor ID"),
+    campaign: str | None = Query(None, description="Filter by campaign ID"),
     first_seen_after: datetime | None = Query(None, description="Indicators first seen after this date"),
     last_seen_before: datetime | None = Query(None, description="Indicators last seen before this date"),
     page: int = Query(1, ge=1, description="Page number (1-based)"),
     limit: int = Query(20, ge=1, le=100, description="Results per page (max 100)"),
 ) -> SearchParams:
+    reject_unknown_params(request, _ALLOWED_SEARCH_PARAMS)
     return SearchParams(
         type=type,
         value=value,
