@@ -12,6 +12,11 @@ class Settings(BaseSettings):
     dashboard_refresh_interval: int = 120
     timeline_refresh_interval: int = 120
 
+    rate_limit_enabled: bool = True
+    rate_limit_capacity: int = 100
+    rate_limit_window_seconds: int = 60
+    rate_limit_exempt_paths: str = "/docs,/openapi.json"
+
     model_config = {"env_prefix": "", "case_sensitive": False}
 
 

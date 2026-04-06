@@ -4,7 +4,7 @@ A high-performance FastAPI backend for a real-time security dashboard. Enables s
 
 ## Architecture
 
-CQRS with polyglot persistence: OpenSearch for real-time indicator lookups, PostgreSQL for campaign analytics, Redis for caching and pre-computed views.
+CQRS with polyglot persistence: OpenSearch for real-time indicator lookups, PostgreSQL for campaign analytics, Redis for caching, pre-computed views, and rate limiting.
 
 ```
                     ┌───────────────────────────┐
@@ -12,21 +12,21 @@ CQRS with polyglot persistence: OpenSearch for real-time indicator lookups, Post
                     │    (Docker container)     │
                     │                           │
                     │  Routers -> Services      │
-                    │  Middleware (correlation  │
-                    │  IDs, structured logging) │
+                    │  Middleware (rate limit,  │
+                    │  correlation IDs, logging)│
                     └────────────┬──────────────┘
                                  │
               ┌──────────────────┼─────────────────┐
               │                  │                 │
         ┌─────▼───────┐   ┌──────▼──────┐   ┌──────▼──────┐
         │ OpenSearch  │   │   Redis     │   │ PostgreSQL  │
-        │ (Hot Tier)  │   │  (Cache)    │   │(Cold/OLAP)  │
-        │             │   │             │   │             │
+        │ (Hot Tier)  │   │  (Cache +   │   │(Cold/OLAP)  │
+        │             │   │  Rate Limit)│   │             │
         │ Denormalized│   │ Cache-aside │   │ SQLAlchemy  │
         │ indicators  │   │ + pre-comp. │   │ + Alembic   │
         └─────────────┘   └─────────────┘   └─────────────┘
 
-        Endpoints 1&2        All endpoints     Endpoints 3&4
+         Endpoints 1&2     All endpoints    Endpoints 3&4
 ```
 
 ## Prerequisites
@@ -41,8 +41,9 @@ CQRS with polyglot persistence: OpenSearch for real-time indicator lookups, Post
 ```bash
 make up          # Start OpenSearch, PostgreSQL, Redis, and FastAPI
 make seed        # Run migrations + load 10K indicators from seed data
-# Visit http://localhost:8000/docs for the interactive API docs
 ```
+
+Visit http://localhost:8000/docs for the interactive API docs
 
 ## API Endpoints
 
@@ -53,6 +54,31 @@ make seed        # Run migrations + load 10K indicators from seed data
 | GET | `/api/campaigns/{id}/indicators` | Campaign timeline grouped by day/week | Redis -> PostgreSQL |
 | GET | `/api/dashboard/summary` | Landing page stats (24h/7d/30d) | Redis (pre-computed) |
 | GET | `/health` | Service connectivity check | All services |
+
+## Rate Limiting
+
+All endpoints (including `/health`) are rate-limited using a token bucket algorithm backed by Redis. Each client IP gets a bucket of tokens that refills over time.
+
+Default configuration: 100 requests per 60 seconds per client IP. Responses include standard headers:
+
+| Header | Description |
+|--------|-------------|
+| `X-RateLimit-Limit` | Bucket capacity |
+| `X-RateLimit-Remaining` | Tokens left after this request |
+| `Retry-After` | Seconds until a token is available (429 responses only) |
+
+When the bucket is empty, the API returns HTTP 429 with a `Retry-After` header.
+
+Configuration via environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RATE_LIMIT_ENABLED` | `true` | Enable/disable rate limiting |
+| `RATE_LIMIT_CAPACITY` | `100` | Max burst size (tokens) |
+| `RATE_LIMIT_WINDOW_SECONDS` | `60` | Refill period |
+| `RATE_LIMIT_EXEMPT_PATHS` | `/docs,/openapi.json` | Comma-separated paths to exempt |
+
+If Redis is unavailable, the rate limiter fails open (requests are allowed through).
 
 ## Example Requests
 
@@ -88,7 +114,7 @@ curl http://localhost:8000/health
 | `make seed` | Run Alembic migrations + load seed data into OpenSearch and PostgreSQL |
 | `make migrate` | Run Alembic migrations to head |
 | `make revision msg="..."` | Auto-generate a new Alembic migration from model changes |
-| `make test` | Run unit tests (20 tests) |
+| `make test` | Run unit tests (44 tests) |
 | `make test-integration` | Run integration tests (requires running services + seed data) |
 | `make lint` | Run ruff linter |
 | `make format` | Run ruff formatter + auto-fix lint issues |
@@ -117,6 +143,12 @@ The test exits with a non-zero code if any threshold is breached, making it suit
 
 You can override the target URL with `BASE_URL=http://remote:8000 make loadtest`.
 
+Since k6 runs all virtual users from a single IP, you may need to disable rate limiting during load tests:
+
+```bash
+RATE_LIMIT_ENABLED=false make loadtest
+```
+
 ## Project Structure
 
 ```
@@ -125,10 +157,11 @@ src/
     main.py            # FastAPI app, lifespan, middleware
     config.py          # pydantic-settings configuration
     db.py              # SQLAlchemy models (source of truth for DB schema)
-    middleware.py       # Correlation ID + request logging
+    middleware.py       # Rate limiting + correlation ID + request logging
+    sanitize.py        # Input validation helpers
     models/            # Pydantic request/response schemas
     routers/           # API route handlers
-    services/          # OpenSearch, PostgreSQL, Redis, cache clients
+    services/          # OpenSearch, PostgreSQL, Redis, cache, rate limiter
   alembic/
     env.py             # Alembic environment (imports app.db.Base)
     versions/          # Auto-generated migrations
@@ -139,6 +172,8 @@ src/
     test_dashboard.py  # Dashboard endpoint tests
     test_health.py     # Health check tests
     test_cache.py      # Cache service tests
+    test_rate_limiter.py       # Rate limiter unit tests
+    test_rate_limit_middleware.py # Rate limit middleware tests
     test_integration.py# Integration tests (real Docker services)
 scripts/
   seed.py              # ETL: runs migrations, then SQLite -> OpenSearch + PostgreSQL
